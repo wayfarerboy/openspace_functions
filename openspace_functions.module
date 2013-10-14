@@ -1,0 +1,1036 @@
+<?php
+
+/**
+ * @file
+ * Demonstrates use of the Cron API in Drupal - hook_cron()
+ */
+
+function openspace_functions_menu() {
+  $items = array();
+  $items['events/coordinator/%'] = array(
+    'title' => 'Redirect',
+    'page callback' => 'openspace_functions_twitter_contact_redirect',
+    'page arguments' => array(2),
+    'access callback' => true,
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function openspace_functions_views_api() {
+  return array(
+    'api' => 3,
+  );
+}
+
+function openspace_functions_views_data() {
+  $data = array();
+
+  $data['openspace_ajax_data']['table']['group'] = t('Openspace');
+  $data['openspace_ajax_data']['table']['join'] = array(
+    '#global' => array(),
+  );
+  $data['openspace_ajax_data']['area'] = array(
+    'title' => t('Ajax data'),
+    'help' => t('Include hidden table data for cached ajax updating.'),
+    'area' => array(
+      'handler' => 'openspace_functions_handler_area_ajax_data',
+      'path' => drupal_get_path('module', 'openspace_functions'),
+    ),
+  );
+
+  $data['openspace_timer']['table']['group'] = t('Openspace');
+  $data['openspace_timer']['table']['join'] = array(
+    '#global' => array(),
+  );
+  $data['openspace_timer']['area'] = array(
+    'title' => t('Timer markup (1m)'),
+    'help' => t('Creates a timer for 1 minute refreshes.'),
+    'area' => array(
+      'handler' => 'openspace_functions_handler_area_timer_markup',
+      'path' => drupal_get_path('module', 'openspace_functions'),
+    ),
+  );
+
+  $data['openspace_twitter_footer']['table']['group'] = t('Openspace');
+  $data['openspace_twitter_footer']['table']['join'] = array(
+    '#global' => array(),
+  );
+  $data['openspace_twitter_footer']['area'] = array(
+    'title' => t('Twitter login and invitation request'),
+    'help' => t('Creates buttons for user actions when Twitter account hasn\'t yet been linked.'),
+    'area' => array(
+      'handler' => 'openspace_functions_handler_area_twitter_button_markup',
+      'path' => drupal_get_path('module', 'openspace_functions'),
+    ),
+  );
+
+  return $data;
+}
+
+function openspace_functions_views_plugins() {
+  $plugins = array();
+
+  $plugins['access']['openspace_invited'] = array(
+    'title' => t('Invited participant'),
+    'help' => t('Only access if the user is an invited participant for the event.'),
+    'handler' => 'openspace_functions_plugin_access',
+    'path' => drupal_get_path('module', 'openspace_functions'),
+  );
+
+  $plugins['access']['twitter_account_linked'] = array(
+    'title' => t('Twitter account linked'),
+    'help' => t('Only access if the user has linked their Twitter account.'),
+    'handler' => 'openspace_functions_plugin_twitter_access',
+    'path' => drupal_get_path('module', 'openspace_functions'),
+  );
+
+  $plugins['cache']['openspace_ping_cache'] = array(
+    'title' => t('Openspace ping'),
+    'help' => t('Openspace-specific caching based on event, question and content type.'),
+    'handler' => 'openspace_functions_plugin_cache',
+    'uses options' => TRUE,
+    'help topic' => '',
+    'path' => drupal_get_path('module', 'openspace_functions'),
+  );
+
+  return $plugins;
+}
+
+function openspace_functions_access_participant($account) {
+  if ($account->uid) {
+    $twits = field_get_items('user', $account, 'field_twitter_username');
+    foreach($twits as $twit) {
+      $term = taxonomy_term_load($twit['tid']);
+    }
+    if (isset($this->view->args)) {
+    }
+    return true;
+  }
+  return false;
+}
+
+function openspace_functions_twitter_access($account) {
+  $acc = openspace_functions_get_twitter_post_account($account->uid);
+  return $acc != false;
+}
+
+function openspace_functions_node_delete($node) {
+  $nids = array();
+  if ($node->type == 'event') {
+    $nids = db_query('SELECT entity_id FROM {field_data_field_event} WHERE field_event_nid = :nid', array(':nid' => $node->nid))->fetchCol();
+  } else if ($node->type == 'question') {
+    $nids = db_query('SELECT entity_id FROM {field_data_field_question_ref} WHERE field_question_ref_nid = :nid', array(':nid' => $node->nid))->fetchCol();
+  }
+  if (count($nids) > 0) {
+    node_delete_multiple($nids);
+    drupal_set_message(format_plural(count($nids), '1 additional node was', '@count additional nodes were').' deleted.');
+  }
+}
+
+function openspace_functions_weight_to_colour($nid, $weight, $TEXT = FALSE) {
+  $hexes = &drupal_static(__FUNCTION__.$weight);
+  if (!isset($hexes)) {
+    $hexes = array();
+    $event = node_load($nid);
+    $space_items = field_get_items('node', $event, 'field_max_concurrent_spaces');
+    $participants = field_get_items('node', $event, 'field_participants');
+    $spaces = $space_items[0]['value'];
+    $total = count($participants);
+    $total2 = count(views_get_view_result('question_sequence', 'all_questions', $nid));
+    if ($total2 > $total) $total = $total2;
+    $step = 1.0 / $total;
+    $spaces *= 2;
+    $loops = 0;
+    if ($weight > 0) {
+      $loops = floor($weight / $spaces);
+    }  
+    $total_loops = ceil($total / $spaces);
+    $hue = $step * $total_loops * $weight;
+    $hue += $step * $loops;
+    $hue = (($hue * 1000 + $nid) % 1000) * 0.001;
+    $rgb = openspace_functions_hsv_to_rgb(array($hue, 0.9, 0.9));
+    $hexes[] = openspace_functions_rgb_to_hex($rgb);
+    $hexes[] = openspace_functions_brightness($rgb);
+  }
+  if ($TEXT) return $hexes[1];
+  return $hexes[0];
+}
+
+function openspace_functions_rgb_to_hex($rgb) {
+  return sprintf('%02X%02X%02X', $rgb[0], $rgb[1], $rgb[2]);
+}
+
+function openspace_functions_hsv_to_rgb($hsv) {
+  list($H,$S,$V) = $hsv;
+  //1
+  $H *= 6;
+  //2
+  $I = floor($H);
+  $F = $H - $I;
+  //3
+  $M = $V * (1 - $S);
+  $N = $V * (1 - $S * $F);
+  $K = $V * (1 - $S * (1 - $F));
+  //4
+  $R = $G = $B = 0;
+  switch ($I) {
+    case 0:
+      list($R,$G,$B) = array($V,$K,$M);
+      break;
+    case 1:
+      list($R,$G,$B) = array($N,$V,$M);
+      break;
+    case 2:
+      list($R,$G,$B) = array($M,$V,$K);
+      break;
+    case 3:
+      list($R,$G,$B) = array($M,$N,$V);
+      break;
+    case 4:
+      list($R,$G,$B) = array($K,$M,$V);
+      break;
+    case 5:
+    case 6: //for when $H=1 is given
+      list($R,$G,$B) = array($V,$M,$N);
+      break;
+  }
+  return array($R * 255, $G * 255, $B * 255);
+}
+
+function openspace_functions_brightness($rgb) {
+  $brightness = sqrt(
+    $rgb[0] * $rgb[0] * 0.299 +
+    $rgb[1] * $rgb[1] * 0.587 +
+    $rgb[2] * $rgb[2] * 0.114
+  );
+  return ($brightness < 130) ? "FFFFFF" : "000000";
+}
+
+function openspace_functions_event_status_check($eid, $status, $account = NULL, $log = NULL) {
+  global $user;
+  if (is_numeric($status)) $status = array($status);
+  if ($account == NULL) $account = $user;
+  $SAME = in_array(openspace_functions_get_event_status($eid), $status);
+  return $SAME; 
+}
+
+function openspace_functions_get_event_status($eid) {
+  $tid = &drupal_static(__FUNCTION__.$eid);
+  if (!isset($tid)) {
+    if ($eid == NULL && is_numeric(arg(1))) {
+      $eid = arg(1);
+    }
+    $event = node_load($eid);
+    if ($event && $event->type == 'event') { 
+      $sids = field_get_items('node', $event, 'field_status');
+      $tid = intval($sids[0]['tid']);
+    } else {
+      $tid = NULL;
+    }
+  }
+  return $tid;
+}
+
+function openspace_functions_status_display($tid, $nid, $u = NULL) {
+  global $user;
+  if (!$u) {
+    $u = $user;
+  }
+  if ($tid == NULL) {
+    $tid = openspace_functions_get_event_status($nid);
+  }
+  $event = null;
+  if (in_array($tid, array(11, 12, 24))) {
+    $node = node_load($nid);
+    $eids = field_get_items('node', $node, 'field_event'); 
+    $event = node_load($eids[0]['nid']);
+  }
+  $items = array();
+  switch ($tid) {
+    case '1':
+      $items[] = l(t('Add more participants'), 'node/'.$nid.'/edit', array('query'=>array('destination'=>$_GET['q'])));
+      if ($u->uid == 1) {
+        $items[] = flag_create_link('add_participants', $nid);
+        $items[] = flag_create_link('auto_post', $nid);
+      }
+      $items[] = flag_create_link('event_active', $nid);
+      break;
+    case '2':
+      if ($u->uid == 1) {
+        $items[] = flag_create_link('add_questions', $nid);
+        $items[] = flag_create_link('auto_post', $nid);
+      }
+      $items[] = flag_create_link('event_active', $nid);
+      $items[] = flag_create_link('discussion_mode', $nid);
+      break;
+    case '3':
+      if ($u->uid == 1) {
+        $items[] = flag_create_link('auto_post', $nid);
+      }
+      $items[] = flag_create_link('discussion_mode', $nid);
+      $items[] = flag_create_link('event_concluded', $nid);
+      break;
+    case '4':
+      if ($u->uid == 1) {
+        $items[] = flag_create_link('auto_post', $nid);
+      }
+      $items[] = flag_create_link('event_concluded', $nid);
+      break;
+    case '11':
+      $status = openspace_functions_get_event_status($event->nid);
+      if ($status == 1 ) {
+        $items[] = '<p>You accepted this invitation. If you wish, you can change your mind and decline the invitation by clicking the button below.</p><p>'.flag_create_link('invitation_status', $nid).'</p>';
+      } else if ($status == 2) {
+        $link = openspace_functions_question_tweet_link(array('event'=>$event->nid));
+        $items[] = '<p>Please submit any questions you wish to host for the event.</p><p>'.$link.'</p>';
+      } else if ($status == 3) {
+        $items[] = '<p>You are participating in this event.</p>';
+      } else {
+        $items[] = '<p>You participated in this event.</p>';
+      }
+      break;
+    case '12':
+      $status = openspace_functions_get_event_status($event->nid);
+      if ($status == 1 ) {
+        $items[] = '<p>You declined this invitation. If you wish, you can still accept by clicking the button below.</p><p>'.flag_create_link('invitation_status', $nid).'</p>';
+      } else {
+        $items[] = '<p>You declined this invitation.</p>';
+      }
+      break;
+    case '24':
+      $status = openspace_functions_get_event_status($event->nid);
+      if ($status == 1 ) {
+        $items[] = '<p>If you wish to accept this invitation, click the button below.</p><p>'.flag_create_link('invitation_status', $nid).'</p>';
+      } else {
+        $items[] = '<p>You declined this invitation.</p>';
+      }
+      break;
+  }
+  $output = '<section class="actions">'.implode(' ', $items).'</section>';
+  return $output;
+} 
+
+function openspace_functions_render_homepage($user) {
+  $output = &drupal_static(__FUNCTION__.$user->uid);
+  if (!isset($output)) {
+    $output = '';
+    $current_user = views_embed_view('invitations', 'my_events', $user->uid);
+    $archive_user = views_embed_view('invitations', 'my_archive', $user->uid);
+    if (in_array('organiser', $user->roles)) {
+      $args = $user->uid;
+      if (in_array('superuser', $user->roles)) $args = 'all';
+      $current = views_embed_view('active_event_lookup', 'admin_current', $args);
+      $archive = views_embed_view('active_event_lookup', 'admin_archive', $args);
+      if ($current || $archive) $output .= '<h2>As an event organiser:</h2>';
+      if ($current) {
+        $output .= '<h3>My current events</h3>';
+        $output .= $current;
+      }
+      if ($archive) {  
+        $output .= '<h3>My event archive</h3>';
+        $output .= $archive;
+      }
+      if ($current_user || $archive_user) $output .= '<h2>As a participant:</h2>';
+    }
+    if ($current_user) {
+      $output .= '<h3>Current events</h3>';
+      $output .= $current_user;
+    }
+    if ($archive_user) {
+      $output .= '<h3>Archive</h3>';
+      $output .= $archive_user;
+    }
+  }
+  return $output;
+}
+
+function openspace_functions_field_formatter_info() {
+  return array(
+    'twitter_username_formatter' => array(
+      'label' => t('Twitter username'),
+      'field types' => array('text', 'taxonomy_term_reference', 'user_reference', 'node_reference'),
+      'multiple values' => FIELD_BEHAVIOR_DEFAULT,
+      'settings'  => array(
+        'profile_picture' => TRUE,
+        'large_profile_picture' => FALSE,
+        'link_to_twitter' => TRUE,
+      ),
+    ),
+    'log_node_display_formatter' => array(
+      'label' => t('Log line display'),
+      'field types' => array('node_reference'),
+      'multiple values' => FIELD_BEHAVIOR_DEFAULT,
+      'settings'  => array(
+        'show_author' => TRUE,
+        'show_action' => TRUE,
+        'show_type' => TRUE,
+        'show_profile_pic' => TRUE,
+        'large_profile_pic' => FALSE,
+        'show_swatch' => TRUE,
+      ),
+    ),
+    'event_participants_formatter' => array(
+      'label' => t('Attending participant list'),
+      'field_types' => array('node_reference'),
+      'multiple_values' => FIELD_BEHAVIOR_DEFAULT,
+      'settings' => array(
+        'profile_picture' => TRUE,
+        'link_to_twitter' => TRUE,
+      ),
+    ),
+  );
+}
+
+function openspace_functions_field_formatter_settings_form($field, $instance, $view_mode, $form, &$form_state) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+  $element = array();
+  if (in_array($display['type'], array('twitter_username_formatter', 'event_participants_formatter'))) {
+    $element['profile_picture'] = array(
+      '#type'           => 'checkbox',
+      '#title'          => t('Profile picture'),
+      '#description'    => t('Include the profile picture with the Twitter username.'),
+      '#default_value'  => $settings['profile_picture'],
+    );
+    $element['large_profile_picture'] = array(
+      '#type'           => 'checkbox',
+      '#title'          => t('Use large profile picture'),
+      '#description'    => t('If using a profile picture, use the larger profile size.'),
+      '#default_value'  => $settings['large_profile_picture'],
+    );
+    $element['link_to_twitter'] = array(
+      '#type'           => 'checkbox',
+      '#title'          => t('Link to Twitter'),
+      '#description'    => t('Link the output to a Twitter status update page.'),
+      '#default_value'  => $settings['link_to_twitter'],
+    );
+  } else if ($display['type'] == 'log_node_display_formatter') {
+    $element['show_author'] = array(
+      '#type'           => 'checkbox',
+      '#title'          => t('Show author details'),
+      '#description'    => t('Show the details of the user who triggered the log entry.'),
+      '#default_value'  => $settings['show_author'],
+    );
+    $element['show_action'] = array(
+      '#type'           => 'checkbox',
+      '#title'          => t('Show action details'),
+      '#description'    => t('Display the action verb in the text.'),
+      '#default_value'  => $settings['show_action'],
+    );
+    $element['show_type'] = array(
+      '#type'           => 'checkbox',
+      '#title'          => t('Show node type'),
+      '#description'    => t('Include the type of the referenced node in the text.'),
+      '#default_value'  => $settings['show_type'],
+    );
+    $element['show_swatch'] = array(
+      '#type'           => 'checkbox',
+      '#title'          => t('Show question swatch'),
+      '#description'    => t('Display the question colour as a swatch in the text.'),
+      '#default_value'  => $settings['show_swatch'],
+    );
+    $element['show_profile_pic'] = array(
+      '#type'           => 'checkbox',
+      '#title'          => t('Show profile picture'),
+      '#description'    => t('Include the profile picture with the username (only displayed if author details enabled).'),
+      '#default_value'  => $settings['show_profile_pic'],
+    );
+    $element['large_profile_pic'] = array(
+      '#type'           => 'checkbox',
+      '#title'          => t('Show a large profile picture'),
+      '#description'    => t('If including a profile picture, use the large version (only used if profile picture enabled).'),
+      '#default_value'  => $settings['large_profile_pic'],
+    );
+  }
+  return $element;
+}
+
+function openspace_functions_field_formatter_settings_summary($field, $instance, $view_mode) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+  $summary = '';
+  if (in_array($display['type'], array('twitter_username_formatter', 'event_participants_formatter'))) {
+    $summary = t('Render a Twitter username@link@pic.', array(
+      '@pic'     => $settings['profile_picture'] ? ' with a '.($settings['large_profile_picture'] ? 'large' : '').' profile picture' : '',
+      '@link'  => $settings['link_to_twitter'] ? ' as a link' : '' ,
+    ));
+  } else if ($display['type'] == 'log_node_display_formatter') {
+    $details = array('main');
+    $names = array('author', 'action', 'type', 'picture', 'swatch');
+    $count = 0;
+    foreach($settings as $setting) {
+      if ($setting) {
+        $details[] = $names[$count];
+      }
+      $count ++;
+    }
+    $text = (count($details) ? 'Include ' : '').implode(', ', $details).(count($details) ? ' details.' : '');
+    $summary = t('@details', array(
+      '@details' => $text,
+    ));
+  }
+  return $summary;
+}
+
+function openspace_functions_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+  $settings = $display['settings'];
+  if (in_array($display['type'], array('twitter_username_formatter', 'event_participants_formatter'))) {
+    $pic = $settings['profile_picture'] ? ($settings['large_profile_picture'] ? 'field_large_picture' : 'field_picture') : FALSE;
+    $link = $settings['link_to_twitter'];
+    if (in_array($field['field_name'], array('field_status', 'field_event', 'field_twitter_account', 'field_users', 'field_participants'))) {
+      $uids = array();
+      if ($field['field_name'] == 'field_twitter_account') {
+        $tids = field_get_items('node', $entity, 'field_twitter_account');
+        foreach($tids as $delta => $tid) {
+          $term = taxonomy_term_load($tid['tid']);
+        }
+        $uids = field_get_items('taxonomy_term', $term, 'field_users');
+      } else if (in_array($field['field_name'], array('field_event', 'field_status'))) {
+        $uids = array(array('uid'=>$entity->uid));
+      } else if ($field['field_name'] == 'field_participants') {
+        $tids = field_get_items('node', $entity, 'field_participants');
+        foreach($tids as $delta => $tid) {
+          $term = taxonomy_term_load($tid['tid']);
+        }
+        $uids = field_get_items('taxonomy_term', $term, 'field_users');
+      } else {
+        $uids = field_get_items('taxonomy_term', $entity, 'field_users');
+      }
+      foreach($uids as $delta => $uid) {
+        $entity = user_load($uid['uid']);
+        $items[$delta] = '';
+        if (count($entity->twitter_accounts) > 0) {
+          $items[$delta] = $entity->twitter_accounts[0]->screen_name;
+        }
+      }
+    }
+    foreach ($items as $delta => $item) {
+      $element[$delta] = array(
+        '#markup' => openspace_functions_format_twitter_username($entity, 'user', $item, $link, $pic),
+      );
+    }
+  } else if ($display['type'] == 'log_node_display_formatter') {
+
+    // Load the node reference
+    $nids = field_get_items('node', $entity, 'field_node');
+    $node = node_load($nids[0]['nid']);
+    $title = $node->title;
+
+    // Load the event reference
+    $eids = field_get_items('node', $entity, 'field_event');
+    $event = node_load($eids[0]['nid']);
+
+    // Include author info
+    $author = '';
+    if ($settings['show_author']) {
+      $u = user_load($entity->uid);
+      $screen_name = '';
+      if ($u->twitter_accounts && count($u->twitter_accounts) > 0) {
+        $screen_name = $u->twitter_accounts[0]->screen_name;
+      }
+      $author = openspace_functions_format_twitter_username($u, 'user', $screen_name, FALSE, $settings['show_profile_pic'] ? ($settings['large_profile_pic'] ? 'field_large_picture' : 'field_picture') : FALSE).' ';
+    }
+
+    // Include action info
+    $action = '';
+    if ($settings['show_action']) {
+      $actions = field_get_items('node', $entity, 'field_action');
+      $action_val = field_view_value('node', $entity, 'field_action', $actions[0], 'taxonomy_term_reference_plain');
+      $action = render($action_val).' ';
+    }
+
+    $type = '';
+    // Include type info
+    if ($settings['show_type']) {
+      $type = 'the '.$node->type.' ';
+    }
+
+    if ($node->type == 'post') {
+      if ($settings['show_type']) {
+        $flag = flag_get_flag('conclusion');
+        if ($flag->is_flagged($node->nid)) {
+          $type = 'the conclusion post ';
+        }
+      }
+        $title = sprintf('<blockquote class="post">%s</blockquote>', check_markup($title, 'tweet_with_preview_', '', true));
+    } else if ($node->type == 'question') {
+      $question = $title;
+      $title = '<span class="question">';
+      if ($settings['show_swatch']) {
+        $colours = field_get_items('node', $node, 'field_colour');
+        $colour = field_view_value('node', $node, 'field_colour', $colours[0]);
+        $title .= render($colour);
+      }
+      $title .= $question.'</span>';
+    } else if ($settings['show_swatch']) {
+      $color = openspace_functions_render_micro_image($event, 'node', 'field_logo', '').' ';
+      $title = '<span class="event">'.$color.$title.'</span>';
+    }
+
+    foreach($items as $delta => $item) {
+      $element[$delta] = array(
+        '#markup' => sprintf('%s%s%s%s', $author, $action, $type, $title)
+      );
+    }
+  }
+  return $element;
+}
+
+function openspace_functions_format_twitter_username($entity, $entity_type, $username, $link = FALSE, $pic = FALSE) {
+  $text = '';
+  if ($username == '' && $entity->name == '') {
+    return $text;
+  }
+  if ($pic) {
+    if ($pic == 'field_large_picture') {
+      $pic = 'field_picture';
+      $text = openspace_functions_render_profile_image($entity, $entity_type, $pic, $text).' ';
+    } else {
+      $text = openspace_functions_render_micro_image($entity, $entity_type, $pic, $text).' ';
+    }
+  }
+  $text .= sprintf('<span class="p-name">%s</span> <span class="p-nickname">%s</span>', $entity->name, $username == '' ? '@'.$entity->name : '@'.$username);
+  if ($link && $username != '') {
+    if ($link == 'profile') {
+      $text = l($text, 'http://twitter.com/'.$username, array('html'=>TRUE, 'attributes'=>array('class'=>array('twitter-mention-button'))));
+    } else {
+      $text = l($text, 'https://twitter.com/intent/tweet', array('html'=>TRUE, 'query'=>array('screen_name'=>$username), 'attributes'=>array('class'=>array('twitter-mention-button'), 'data-related'=>$username)));
+    }
+  }
+  return $text;
+}
+
+function openspace_functions_render_micro_image($entity, $type, $field, $text) {
+  $pictures = field_get_items($type, $entity, $field);
+  $text= '';
+  if ($pictures) {
+    foreach($pictures as $fid) {
+      $text .= theme('image_style', array('style_name'=>'micro_profile', 'path'=>$fid['uri'], 'attributes'=>array('class'=>array('swatch'))));
+    }
+  }
+  return $text;
+}
+
+function openspace_functions_render_profile_image($entity, $type, $field, $text) {
+  $pictures = field_get_items($type, $entity, $field);
+  $text= '';
+  if ($pictures) {
+    foreach($pictures as $fid) {
+      $text .= theme('image_style', array('style_name'=>'profile', 'path'=>$fid['uri'], 'attributes'=>array('class'=>array('swatch'))));
+    }
+  }
+  return $text;
+}
+
+function openspace_functions_get_active_event() {
+  global $user;
+  $site_event = &drupal_static(__FUNCTION__);
+  if (!isset($site_event)) {
+    $site_event = FALSE;
+    if (arg(0) == 'node' && is_numeric(arg(1))) {
+      $node = node_load(arg(1));
+      if ($node && $node->type == 'event') {
+        $site_event = $node;
+      }
+    }
+    if (!$site_event && $user->uid) {
+      $result = views_get_view_result('invitations', NULL, 'all', 'all', $user->uid, 11);
+      if (count($result)) {
+        $site_event = node_load($result[0]->node_field_data_field_event_nid);
+      }
+    }
+  }
+  return $site_event;
+}
+
+function openspace_functions_get_site_organiser() {
+  global $user;
+  $site_organiser = &drupal_static(__FUNCTION__);
+  if (!isset($site_organiser)) {
+    $site_organiser = FALSE;
+    if ($user->uid && in_array('organiser', $user->roles)) {
+      $site_organiser = user_load($user->uid);
+    } else {
+      $event = openspace_functions_get_active_event();
+      if ($event) {
+        $site_organiser = user_load($event->uid);
+      }
+    }
+  }
+  return $site_organiser;
+}
+
+function openspace_functions_get_site_logo() {
+  $site_logo = &drupal_static(__FUNCTION__);
+  if (!isset($site_logo)) {
+    $site_logo = FALSE;
+    $fids = array();
+    $organiser = openspace_functions_get_site_organiser();
+    if ($organiser && count($organiser->field_logo)) {
+      $fids = field_get_items('user', $organiser, 'field_logo');
+      foreach($fids as $fid) {
+        $site_logo = image_style_url('logo', $fid['uri']);
+      }
+    }
+  }
+  return $site_logo;
+}
+
+function openspace_functions_get_site_name() {
+  $site_name = &drupal_static(__FUNCTION__);
+  if (!isset($site_name)) {
+    $site_name = variable_get('site_name', '');
+    $organiser = openspace_functions_get_site_organiser();
+    if ($organiser) {
+      $names = field_get_items('user', $organiser, 'field_site_name');
+      if ($names) {
+        foreach($names as $name) {
+          $value =  field_view_value('user', $organiser, 'field_site_name', $name);
+          $site_name = render($value);
+        }
+      }
+    }
+  }
+  return $site_name;
+}
+
+function openspace_functions_get_last_event_timestamp($eid) {
+  $timestamp = &drupal_static(__FUNCTION__.$eid);
+  if (!isset($timestamp)) {
+    $timestamp = 0;
+    $result = views_get_view_result('latest_event_content', 'default', $eid, $timestamp);
+    if (count($result) > 0) {
+      $timestamp = $result[0]->node_changed;
+    }
+  }
+  return $timestamp;
+}
+
+function openspace_functions_ping($eid = 'all', $qid = 'all', $type = 'all') {
+  $args = array($eid, $qid, $type);
+  $NEW = &drupal_static(__FUNCTION__.implode('-', $args));
+  if (!isset($NEW)) {
+    $NEW = false;
+    $cached = views_get_view_result('latest_event_content', 'cached', $eid, $qid, $type);
+    $fresh = views_get_view_result('latest_event_content', 'fresh', $eid, $qid, $type);
+    if (count($cached) == 0 || count($fresh) == 0) {
+      $NEW = true;
+    } else {
+      if ($cached[0]->node_changed != $fresh[0]->node_changed) {
+        $NEW = true;
+        views_arg_cache_flush('latest_event_content', 'cached', $args);
+        $cached = views_get_view_result('latest_event_content', 'cached', $eid, $qid, $type);
+      }
+    }
+  }
+  return $NEW;
+}
+
+function openspace_functions_question_tweet_link($variables) {
+  $event = $question = null;
+  if (isset($variables['post']) || isset($variables['question'])) {
+    $prefix = '';
+    if (isset($variables['post'])) {
+      $post = node_load($variables['post']);
+      $qids = field_get_items('node', $post, 'field_question_ref');
+      $question = node_load($qids[0]['nid']);
+    } else {
+      $question = node_load($variables['question']);
+      $prefix = '<i class="icon-play expand"></i> ';
+    }
+    if ($question != null) {
+      $htags = field_get_items('node', $question, 'field_hashtag');
+      $eids = field_get_items('node', $question, 'field_event');
+      $event = node_load($eids[0]['nid']);
+      $user = user_load($event->uid);
+      /* $conclude = url('https://twitter.com/intent/tweet', array(
+        'query' => array('screen_name' => $user->twitter_accounts[0]->screen_name, 'hashtags' => $htags[0]['value'].','.'conclusion'),
+        'external'=>true,
+        'attributes' => array('class'=>array('discuss-link'), 'data-related' => $user->twitter_accounts[0]->screen_name)
+      )); */
+      
+      /* $link = l('<i class="icon-comment twitter"></i><i data-url="'.$conclude.'" class="icon-edit conclude"></i> <span class="hashtag">'.$prefix.'#'.$htags[0]['value'].'</span>', 'https://twitter.com/intent/tweet', array(
+        'html' => true,
+        'query' => array('screen_name' => $user->twitter_accounts[0]->screen_name, 'hashtags' => $htags[0]['value']),
+        'attributes' => array('class'=>array('discuss-link'), 'data-related' => $user->twitter_accounts[0]->screen_name),
+      )); */
+
+      $linkText = '';
+      $linkText = '<i class="icon-comment twitter"></i>';
+      if ($user->uid == $question->uid) {
+        $conclude = openspace_functions_create_post_link($event, $question, $user);
+        $linkText .= '<i data-url="'.$conclude.'" class="icon-edit conclude"></i>';
+      }
+      $linkText .= '<span class="hashtag">'.$prefix.'#'.$htags[0]['value'].'</span>';
+      $link = openspace_functions_create_post_link($event, $question, $user, $linkText);
+      return $link;
+    }
+  } else {
+    $event = node_load($variables['event']);
+    $user = user_load($event->uid);
+    $link = l('<i class="icon-help"></i> Submit a question', 'node/add/question', array(
+      'html' => true,
+      'query' => array(
+        'destination'=>$_GET['q'],
+        'edit'=>array('field_event'=>array(LANGUAGE_NONE=>$event->nid))
+      )
+    ));
+    return $link;
+  }
+  return '';
+}
+
+function openspace_functions_create_post_link($event, $question, $user, $text='') {
+  $link = array(
+    'href'=>'node/add/post',
+    'query'=>array(
+      'edit'=>array(
+        'field_event'=>array(LANGUAGE_NONE=>$event->nid), 
+        'field_question_ref'=>array(LANGUAGE_NONE=>$question->nid),
+      ),
+      'destination'=>$_GET['q'],
+      'conclusion'=>$text==''?1:0,
+    ),
+    'html'=>TRUE,
+    'attributes'=>array(
+      'class'=>array('discuss-link'),
+      'data-related'=>$user->twitter_accounts[0]->screen_name
+    )
+  );
+  if ($text == '') {
+    return url($link['href'], $link);
+  }
+  return l($text, $link['href'], $link);
+}
+
+function openspace_functions_form_alter(&$form, $form_state, $form_id) {
+  if ($form_id == 'hybridauth_user_identity') {
+    unset($form['connected_providers']);
+    if (count($form['identity']['#rows']) > 0) {
+      unset($form['hybridauth_widget']);
+    } else {
+      unset($form['identity']);
+    }
+  }
+}
+
+function openspace_functions_twitter_contact_redirect($type) {
+  $hashtags = $text = $screen_name = $site_name = '';
+  $cur = '';
+  $cur = parse_url($_SERVER['SERVER_NAME']);
+  if (isset($cur['host'])) {
+    $result = views_get_view_result('event_coordinators');
+    foreach($result as $row) {
+      $u = $row->_field_data['uid']['entity'];
+      $urls = field_get_items('user', $u, 'field_site_url');
+      if (count($urls) > 0) {
+        $url = parse_url($urls[0]['value']);
+        if ($url['host'] == $cur['host']) {
+          $screen_name = $u->twitter_accounts[0]->screen_name;
+          $names = field_get_items('user', $u, 'field_site_name');
+          $site_name = $names[0]['value'];
+          break;
+        }
+      }
+    }
+  }
+  if ($screen_name != '') {
+    if ($type == 'request-invitation') {
+      $hashtags = 'invitation';
+      $text = 'Please invite me to your next '.$site_name.' event.';
+    }
+    drupal_goto('https://twitter.com/intent/tweet', array('external'=>true, 'query'=>array('screen_name'=>$screen_name, 'hashtags'=>$hashtags, 'text'=>$text)));
+  } else {
+    drupal_goto('events/coordinators');
+  }
+}
+
+function openspace_functions_get_twitter_post_account($uid) {
+  $user = user_load($uid);
+  if (count($user->twitter_accounts) > 0) {
+    $acc = $user->twitter_accounts[0];
+    return $acc;
+  }
+  return false;
+}
+
+function openspace_functions_direct_message_tweet($eid, $screen_name, $message) {
+  $uid = NULL;
+  $event = node_load($eid);
+  if (!$event) {
+    $user = user_load($eid);
+    if (!$user) {
+      drupal_set_message(t('Unknown id, cannot post to Twitter'), 'warning');
+      return NULL;
+    } else {
+      $uid = $user->uid;
+    }
+  } else {
+    $uid = $event->uid;
+  }
+  if ($uid > 1) {
+    $twitter_account = openspace_functions_get_twitter_post_account($uid);
+    $message .= ' '.twitter_shorten_url(url('<front>', array('absolute'=>true)));
+    if ($twitter_account) {
+      $twitter = twitter_connect($twitter_account);
+      try {
+        $twitter->direct_messages_new($screen_name, array('text'=>$message));
+        drupal_set_message(t('Posted to @screen: @message',
+                             array('@screen' => $screen_name, '@message' => $message)));
+      } catch (TwitterException $e) {
+        drupal_set_message(t('An error occurred when posting to Twitter: @message',
+                             array('@message' => $e->getMessage())), 'warning');
+      }
+    }
+  } else {
+    drupal_set_message(t('Posted to @screen: @message',
+                       array('@screen' => $screen_name, '@message' => $message)));
+  }
+}  
+
+function openspace_functions_render_followers_list($eid) {
+  /*
+  $event = node_load($eid);
+  $text = '<a href="#" class="twitter-mention-button %s"><img class="swatch" src="%s" /> <span class="p-name">%s</span> <span class="p-nickname">@%s</span></a>';
+  $items = array();
+  if ($event->uid != 1) {
+    $acc = openspace_functions_get_twitter_post_account($event->uid);
+    if ($acc) {
+      $twitter = twitter_connect($acc);
+      $friends = $twitter->friends_ids($acc->screen_name);
+      $followers = $twitter->followers_ids($acc->screen_name);
+      $ids = array_unique(array_merge($friends['ids'], $followers['ids']));
+      foreach($ids as $id) {
+        $type = array();
+        if (in_array($id, $followers['ids'])) {
+          $type[] = 'friend';
+        }
+        if (in_array($id, $followers['ids'])) {
+          $type[] = 'follower';
+        }
+        if ($friend = cache_get('openspace_twitter_id_'.$id.'_'.implode('_', $type))) {
+          $items[] = $friend->data;
+        }
+        if (empty($friend)) {
+          $f = $twitter->users_show($id);
+          $friend = sprintf($text, implode(' ', $type), $f->profile_image_url, $f->name, $f->screen_name);
+          cache_set('openspace_twitter_id_'.$id, $friend);
+          $items[] = $friend;
+        }
+      }
+    }
+  } else {
+    $uids = db_query('SELECT uid FROM {users} ORDER BY RAND() LIMIT 20')->fetchCol();
+    $type = array('friend', 'follower');
+    $screen_name = '';
+    foreach($uids as $uid) {
+      $result = views_get_view_result('twitter_accounts', 'default', $uid);
+      foreach($result as $row) {
+        $screen_name = $row->field_users_users_name;
+      }
+      $user = user_load($uid);
+      $fids = field_get_items('user', $user, 'field_picture');
+      $url = '';
+      if (count($fids) > 0) {
+        $url = image_style_url('profile', $fids[0]['uri']);
+      }
+      $friend = sprintf($text, implode(' ', $type), $url, $user->name, $screen_name);
+      $items[] = $friend;
+    }
+  }
+  return theme('item_list', array('items'=>$items, 'attributes'=>array('class'=>array('followers'))));
+   */
+  return '';
+}
+
+function openspace_functions_twitter_auth_account_form($form, $form_state) {
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => '<i class="icon-twitter" class="twitter"></i> '.t('Log in with Twitter'),
+    '#prefix' => t('<p>In order to use this site, you need to link with your Twitter account.</p>'),
+  );
+
+  return $form;
+}
+
+/**
+ * Form validation for adding a new Twitter account.
+ */
+function openspace_functions_twitter_auth_account_form_validate($form, &$form_state) {
+  $key = variable_get('twitter_consumer_key', '');
+  $secret = variable_get('twitter_consumer_secret', '');
+  if ($key == '' || $secret == '') {
+    form_set_error('', t('Please configure your consumer key and secret key at ' .
+      '<a href="!url">Twitter settings</a>.', array( '!url' => url('admin/config/services/twitter'),
+    )));
+  }
+}
+
+/**
+ * Form submit handler for adding a Twitter account.
+ *
+ * Loads Twitter account details and adds them to the user account
+ */
+function openspace_functions_twitter_auth_account_form_submit($form, &$form_state) {
+  $key = variable_get('twitter_consumer_key', '');
+  $secret = variable_get('twitter_consumer_secret', '');
+  $twitter = new Twitter($key, $secret);
+  $token = $twitter->get_request_token();
+  if ($token) {
+    $_SESSION['twitter_oauth']['token'] = $token;
+    $_SESSION['twitter_oauth']['destination'] = $_GET['q'];
+    // Check for the overlay.
+    if (module_exists('overlay') && overlay_get_mode() == 'child') {
+      overlay_close_dialog($twitter->get_authorize_url($token), array('external' => TRUE));
+      overlay_deliver_empty_page();
+    }
+    else {
+      drupal_goto($twitter->get_authorize_url($token));
+    }
+  }
+  else {
+    drupal_set_message(t('Could not obtain a valid token from the Twitter API. Please review the configuration.'),
+      'error');
+  }
+}
+
+function openspace_functions_parse_hashtags($text) {
+  preg_match_all("/#(\\w+)/", $text, $matches);
+  $hashtags = $matches[1];
+  if (count($hashtags)) {
+    foreach($hashtags as $i => $hashtag) {
+      $hashtags[$i] = strtolower($hashtag);
+    }
+    return $hashtags;
+  }
+  return array();
+}
+
+function openspace_functions_remove_from_start($needle, $haystack, $prefix='') {
+  $haystack = trim($haystack);
+  $ALTERED = FALSE;
+  $new_needle = $needle;
+  foreach($needle as $keyword) {
+    $keyword = $prefix.$keyword;
+    if (strpos($haystack, $keyword) == 0) {
+      $haystack = trim(substr($haystack, strlen($keyword)));
+      unset($new_needle[array_search($keyword, $new_needle)]);
+      $ALTERED = TRUE;
+    }
+  }
+  return $haystack;
+}
+
+function openspace_functions_clean_tweet($text, $hashtags, $org_screen_name) {
+  // Remove organiser's username from start of tweet
+  $text = openspace_functions_remove_from_start(array("$org_screen_name"), $text, '@');
+  // Remove hashtag from start of string
+  $text = openspace_functions_remove_from_start(explode('+', $hashtags), $text, '#');
+  return $text;
+}
+
+/**
+ * @} End of "defgroup openspace_functions".
+ */

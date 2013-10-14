@@ -1,0 +1,18 @@
+name = OpenSpace functions
+description = Functions and overrides for the C&T openspace site
+package = Generamics
+dependencies[] = views
+core = 7.x
+
+; Information added by drupal.org packaging script on 2013-06-12
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "Generamics"
+datestamp = "1374262723"
+
+files[] = openspace_functions_handler_area_ajax_data.inc
+files[] = openspace_functions_handler_area_timer_markup.inc
+files[] = openspace_functions_handler_area_twitter_button_markup.inc
+files[] = openspace_functions_plugin_access.inc
+files[] = openspace_functions_plugin_cache.inc
+files[] = openspace_functions_plugin_twitter_access.inc
