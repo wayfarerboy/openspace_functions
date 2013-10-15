@@ -745,18 +745,6 @@ function openspace_functions_question_tweet_link($variables) {
       $eids = field_get_items('node', $question, 'field_event');
       $event = node_load($eids[0]['nid']);
       $user = user_load($event->uid);
-      /* $conclude = url('https://twitter.com/intent/tweet', array(
-        'query' => array('screen_name' => $user->twitter_accounts[0]->screen_name, 'hashtags' => $htags[0]['value'].','.'conclusion'),
-        'external'=>true,
-        'attributes' => array('class'=>array('discuss-link'), 'data-related' => $user->twitter_accounts[0]->screen_name)
-      )); */
-      
-      /* $link = l('<i class="icon-comment twitter"></i><i data-url="'.$conclude.'" class="icon-edit conclude"></i> <span class="hashtag">'.$prefix.'#'.$htags[0]['value'].'</span>', 'https://twitter.com/intent/tweet', array(
-        'html' => true,
-        'query' => array('screen_name' => $user->twitter_accounts[0]->screen_name, 'hashtags' => $htags[0]['value']),
-        'attributes' => array('class'=>array('discuss-link'), 'data-related' => $user->twitter_accounts[0]->screen_name),
-      )); */
-
       $linkText = '';
       $linkText = '<i class="icon-comment twitter"></i>';
       if ($user->uid == $question->uid) {
@@ -813,16 +801,18 @@ function openspace_functions_form_alter(&$form, $form_state, $form_id) {
     } else {
       unset($form['identity']);
     }
-  } else if (in_array($form['#bundle'], array('event', 'question', 'post'))) {
-    // Add a cancel button.
-    $form['actions']['cancel'] = array(
-      '#type'   => 'submit',
-      '#value'  => t('Cancel'),
-      '#access' => TRUE,
-      '#weight' => 15,
-      '#submit' => array('openspace_functions_form_cancel', 'node_form_submit_build_node'),
-      '#limit_validation_errors' => array(),
-    );
+  } else if (isset($form['#bundle'])) {
+    if (in_array($form['#bundle'], array('event', 'question', 'post'))) {
+      // Add a cancel button.
+      $form['actions']['cancel'] = array(
+        '#type'   => 'submit',
+        '#value'  => t('Cancel'),
+        '#access' => TRUE,
+        '#weight' => 15,
+        '#submit' => array('openspace_functions_form_cancel', 'node_form_submit_build_node'),
+        '#limit_validation_errors' => array(),
+      );
+    }
   }
 }
 
