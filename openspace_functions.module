@@ -813,7 +813,22 @@ function openspace_functions_form_alter(&$form, $form_state, $form_id) {
     } else {
       unset($form['identity']);
     }
+  } else if (in_array($form['#bundle'], array('event', 'question', 'post'))) {
+    // Add a cancel button.
+    $form['actions']['cancel'] = array(
+      '#type'   => 'submit',
+      '#value'  => t('Cancel'),
+      '#access' => TRUE,
+      '#weight' => 15,
+      '#submit' => array('openspace_functions_form_cancel', 'node_form_submit_build_node'),
+      '#limit_validation_errors' => array(),
+    );
   }
+}
+
+function openspace_functions_form_cancel($form, &$form_state) {
+  $url = $_GET['destination'] ? $_GET['destination'] : 'events';
+  drupal_goto($url);
 }
 
 function openspace_functions_twitter_contact_redirect($type) {
@@ -1036,14 +1051,15 @@ function openspace_functions_twitter_user_block() {
   $u = user_load($user->uid); 
   $screen_name = $u->name;
   $log_out = l(t('Log out'), 'user/logout', array('query'=>array('destination'=>'user/login')));
+  $username = '<strong>'.$user->name.'</strong>';
   if (count($u->twitter_accounts) > 0) {
     $screen_name = $u->twitter_accounts[0]->screen_name;
-  } else {
+    $username = openspace_functions_format_twitter_username($user, 'user', $screen_name, TRUE, 'field_picture');
+  } else if (arg(0) != 'user') {
     openspace_functions_twitter_account_message();
     drupal_goto('user');
   }
-  $username = openspace_functions_format_twitter_username($user, 'user', $screen_name, TRUE, 'field_picture');
-  return '<p class="logged-in-message">'.t('You are logged in as').' '.$username.' '.t('Not you?').' '.$log_out.'</p>';
+  return '<p class="logged-in-message">'.t('You are logged in as').' '.$username.'. '.t('Not you?').' '.$log_out.'</p>';
 }
 
 function openspace_functions_twitter_account_message() {
