@@ -1031,6 +1031,25 @@ function openspace_functions_clean_tweet($text, $hashtags, $org_screen_name) {
   return $text;
 }
 
+function openspace_functions_twitter_user_block() {
+  global $user; 
+  $u = user_load($user->uid); 
+  $screen_name = $u->name;
+  $log_out = l(t('Log out'), 'user/logout', array('query'=>array('destination'=>'user/login')));
+  if (count($u->twitter_accounts) > 0) {
+    $screen_name = $u->twitter_accounts[0]->screen_name;
+  } else {
+    openspace_functions_twitter_account_message();
+    drupal_goto('user');
+  }
+  $username = openspace_functions_format_twitter_username($user, 'user', $screen_name, TRUE, 'field_picture');
+  return '<p class="logged-in-message">'.t('You are logged in as').' '.$username.' '.t('Not you?').' '.$log_out.'</p>';
+}
+
+function openspace_functions_twitter_account_message() {
+  drupal_set_message(t('In order to use this site, you need to click the button below to link with your Twitter account.'), 'warning', FALSE);
+}
+
 /**
  * @} End of "defgroup openspace_functions".
  */
