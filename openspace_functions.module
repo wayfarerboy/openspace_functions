@@ -505,6 +505,9 @@ function openspace_functions_field_formatter_view($entity_type, $entity, $field,
           $items[$delta] = $entity->twitter_accounts[0]->screen_name;
         }
       }
+      if (count($items) == 0 && isset($term->name)) {
+        $items[] = $term->name;
+      }
     }
     foreach ($items as $delta => $item) {
       $element[$delta] = array(
