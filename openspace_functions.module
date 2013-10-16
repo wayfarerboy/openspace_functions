@@ -591,8 +591,8 @@ function openspace_functions_format_twitter_username($entity, $entity_type, $use
       $text = openspace_functions_render_micro_image($entity, $entity_type, $pic, $text).' ';
     }
   }
-  $text .= sprintf('<span class="p-name">%s</span> <span class="p-nickname">%s</span>', $entity->name, $username == '' ? '@'.$entity->name : '@'.$username);
-  if ($link && $username != '') {
+  $text .= sprintf('<span class="p-name">%s</span> <span class="p-nickname">%s</span>', $entity->name, $username == '' || is_array($username) ? '@'.$entity->name : '@'.$username);
+  if ($link && $username != '' && !is_array($username)) {
     if ($link == 'profile') {
       $text = l($text, 'http://twitter.com/'.$username, array('html'=>TRUE, 'attributes'=>array('class'=>array('twitter-mention-button'))));
     } else {
