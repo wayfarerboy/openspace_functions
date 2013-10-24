@@ -424,7 +424,7 @@ function openspace_functions_question_tweet_link($variables) {
       $user = user_load($event->uid);
       $linkText = '';
       $linkText = '<i class="icon-comment twitter"></i>';
-      if ($user->uid == $question->uid) {
+      if ($user->uid == $question->uid || in_array('superuser', $user->roles) || $event->uid == $user->uid) {
         $conclude = openspace_functions_create_post_link($event, $question, $user);
         $linkText .= '<i data-url="'.$conclude.'" class="icon-edit conclude"></i>';
       }
@@ -474,7 +474,7 @@ function openspace_functions_create_post_link($event, $question, $user, $text=''
 
 function openspace_functions_form_alter(&$form, $form_state, $form_id) {
   if (isset($form['#bundle'])) {
-    if (in_array($form['#bundle'], array('event', 'question', 'post'))) {
+    if (in_array($form['#bundle'], array('event', 'question', 'post', 'user'))) {
       // Add a cancel button.
       $form['actions']['cancel'] = array(
         '#type'   => 'submit',
