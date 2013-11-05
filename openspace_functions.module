@@ -208,29 +208,25 @@ function openspace_functions_status_display($tid, $nid, $u = NULL) {
       $items[] = l(t('Invite participants'), 'node/add/user-import', $query);
       if ($u->uid == 1) {
         $items[] = flag_create_link('add_participants', $nid);
-        $items[] = flag_create_link('auto_post', $nid);
       }
-      $items[] = flag_create_link('event_active', $nid);
+      $results = views_get_view_result('event_participants_have_accepted_', 'views_rules_1', $nid);
+      if (count($results) >= 2) {
+        $items[] = flag_create_link('event_active', $nid);
+      }
       break;
     case '2':
       if ($u->uid == 1) {
         $items[] = flag_create_link('add_questions', $nid);
-        $items[] = flag_create_link('auto_post', $nid);
       }
       $items[] = flag_create_link('event_active', $nid);
       $items[] = flag_create_link('discussion_mode', $nid);
       break;
     case '3':
-      if ($u->uid == 1) {
-        $items[] = flag_create_link('auto_post', $nid);
-      }
+      $items[] = render(rules_link_render('generate_post', $nid, array('destination'=>$_GET['q'])));
       $items[] = flag_create_link('discussion_mode', $nid);
       $items[] = flag_create_link('event_concluded', $nid);
       break;
     case '4':
-      if ($u->uid == 1) {
-        $items[] = flag_create_link('auto_post', $nid);
-      }
       $items[] = flag_create_link('event_concluded', $nid);
       break;
     case '11':
@@ -489,7 +485,17 @@ function openspace_functions_form_alter(&$form, $form_state, $form_id) {
 }
 
 function openspace_functions_form_cancel($form, &$form_state) {
-  $url = $_GET['destination'] ? $_GET['destination'] : 'events';
+  global $user;
+  $url = 'events';
+  if (isset($_GET['destination'])) {
+    $url = $_GET['destination'];
+  } else if (arg(2) == 'edit') {
+    if (arg(0) == 'user' && $user->uid == arg(1)) {
+      $url = 'user/'.$user->uid;
+    } else if (arg(0) == 'node') {
+      $url = 'node/'.arg(1);
+    }
+  }
   drupal_goto($url);
 }
 
@@ -499,7 +505,7 @@ function openspace_functions_user_logout_block() {
   $screen_name = $u->name;
   $log_out = l(t('Log out'), 'user/logout', array('query'=>array('destination'=>'user/login')));
   $username = user_view($u, 'compact_profile');
-  return '<p class="logged-in-message">'.t('You are logged in as').' '.drupal_render($username).'. '.t('Not you?').' '.$log_out.'</p>';
+  return '<p class="logged-in-message">'.t('You are logged in as').' '.l(drupal_render($username), 'user/'.$user->uid, array('html'=>true)).'. '.t('Not you?').' '.$log_out.'</p>';
 }
 
 /**
